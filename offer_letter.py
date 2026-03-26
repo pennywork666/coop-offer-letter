@@ -5,17 +5,16 @@ from copy import deepcopy
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal, ROUND_HALF_UP
+from io import BytesIO
 from pathlib import Path
 import re
 
 import streamlit as st
-import streamlit.components.v1 as components
 from docx import Document
 
 
 BASE_DIR = Path(__file__).resolve().parent
 TEMPLATE_PATH = BASE_DIR / "Offer Letter Template.docx"
-OUTPUT_DIR = BASE_DIR / "generated"
 LOGO_PATH = BASE_DIR / "Midea.png"
 LOCATION_DETAILS = {
     "Louisville": "2700 Chestnut Station Ct, Louisville, KY 40299",
@@ -112,17 +111,18 @@ def replace_paragraph(paragraph, parts: list[tuple[str, int | None]]) -> None:
         add_styled_run(paragraph, text, source_run)
 
 
-def populate_offer_letter(template_path: Path, output_path: Path, data: OfferLetterData) -> Path:
+def build_offer_letter_document(template_path: Path, data: OfferLetterData) -> Document:
     document = Document(template_path)
     paragraphs = document.paragraphs
+
+    if len(paragraphs) < 57:
+        raise ValueError("The template structure changed. Expected at least 57 paragraphs.")
+
     location_text = LOCATION_DETAILS.get(data.work_location, data.work_location)
     overtime_rate = compute_overtime_rate(data.hourly_rate)
     relocation_paragraph = paragraphs[15]
     reporting_clause = extract_reporting_clause(paragraphs[8].text)
     reporting_sentence = f" You will be reporting to {reporting_clause}." if reporting_clause else ""
-
-    if len(paragraphs) < 57:
-        raise ValueError("The template structure changed. Expected at least 57 paragraphs.")
 
     replace_paragraph(paragraphs[6], [(format_long_date(data.letter_date), None)])
     replace_paragraph(
@@ -204,9 +204,17 @@ def populate_offer_letter(template_path: Path, output_path: Path, data: OfferLet
     if data.relocation_assistance == Decimal("0"):
         remove_paragraph(relocation_paragraph)
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    document.save(output_path)
-    return output_path
+    return document
+
+
+def build_offer_letter_bytes(template_path: Path, data: OfferLetterData) -> bytes:
+    document = build_offer_letter_document(template_path, data)
+    buffer = BytesIO()
+    document.save(buffer)
+    buffer.seek(0)
+    return buffer.getvalue()
+
+
 def build_data(
     candidate_name: str,
     letter_date: date,
@@ -229,28 +237,11 @@ def build_data(
         relocation_assistance=Decimal(str(relocation_assistance)),
         output_stem=sanitize_filename(output_stem),
     )
- 
-
-def trigger_download(file_path: Path) -> None:
-    mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-    file_data = base64.b64encode(file_path.read_bytes()).decode("ascii")
-    components.html(
-        f"""
-        <script>
-        const link = document.createElement("a");
-        link.href = "data:{mime};base64,{file_data}";
-        link.download = "{file_path.name}";
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        </script>
-        """,
-        height=0,
-    )
 
 
 def main() -> None:
     st.set_page_config(page_title="MARC CO-OP Offer Letter Generator", layout="wide")
+
     logo_markup = ""
     if LOGO_PATH.exists():
         logo_markup = f'<img class="midea-logo" src="{get_image_data_uri(LOGO_PATH)}" alt="Midea logo" />'
@@ -269,7 +260,7 @@ def main() -> None:
             padding-top: 3.5rem;
             padding-bottom: 2.5rem;
         }}
-        div[data-testid="stForm"] {{
+        div[data-testid="stVerticalBlockBorderWrapper"] {{
             background: rgba(255, 255, 255, 0.98);
             border: 1px solid rgba(104, 157, 214, 0.22);
             border-radius: 18px;
@@ -294,13 +285,8 @@ def main() -> None:
             margin: 0.75rem 0 2rem;
             letter-spacing: 0.02em;
         }}
-        div[data-testid="stFormSubmitButton"] {{
-            display: flex;
-            justify-content: center;
+        div[data-testid="stDownloadButton"] button {{
             width: 100%;
-        }}
-        div[data-testid="stFormSubmitButton"] button {{
-            width: 340px;
             min-height: 4rem;
             font-size: 1.18rem;
             font-weight: 600;
@@ -319,11 +305,9 @@ def main() -> None:
         st.error(f"Template not found: {TEMPLATE_PATH}")
         return
 
-    OUTPUT_DIR.mkdir(exist_ok=True)
-
     today = date.today()
 
-    with st.form("offer_letter_form"):
+    with st.container(border=True):
         first_left, first_right = st.columns(2)
         with first_left:
             candidate_name = st.text_input("Name", value="")
@@ -365,66 +349,63 @@ def main() -> None:
         with fourth_right:
             st.empty()
 
-        submitted = st.form_submit_button("Generate offer letter")
+        if relocation_assistance is None:
+            relocation_assistance = 0.0
 
-    if not submitted:
-        return
+        validation_errors = []
+        if not candidate_name.strip():
+            validation_errors.append("Name")
+        if not position_title.strip():
+            validation_errors.append("Job title")
+        if not (work_location or "").strip():
+            validation_errors.append("Working location")
+        if employment_start_date is None or employment_end_date is None:
+            validation_errors.append("Employment dates")
+        if hourly_rate is None:
+            validation_errors.append("Hourly rate")
+        if (
+            employment_start_date is not None
+            and employment_end_date is not None
+            and employment_end_date < employment_start_date
+        ):
+            validation_errors.append("Employment end date must be on or after the employment start date")
 
-    required_fields = {
-        "Name": candidate_name,
-        "Job title": position_title,
-        "Working location": work_location or "",
-    }
+        final_output_stem = build_default_output_stem(candidate_name or "candidate")
+        download_data = b""
+        generation_error = None
 
-    missing_fields = [label for label, value in required_fields.items() if not value.strip()]
-    if missing_fields:
-        st.error("Please fill in: " + ", ".join(missing_fields))
-        return
+        if not validation_errors:
+            try:
+                offer_data = build_data(
+                    candidate_name=candidate_name,
+                    letter_date=today,
+                    position_title=position_title,
+                    work_location=work_location,
+                    employment_start_date=employment_start_date,
+                    employment_end_date=employment_end_date,
+                    hourly_rate=hourly_rate,
+                    relocation_assistance=relocation_assistance,
+                    output_stem=final_output_stem,
+                )
+                download_data = build_offer_letter_bytes(TEMPLATE_PATH, offer_data)
+            except Exception as exc:
+                generation_error = str(exc)
 
-    if employment_start_date is None or employment_end_date is None:
-        st.error("Please fill in both employment dates.")
-        return
+        if generation_error:
+            st.error(f"Generation failed: {generation_error}")
+        elif validation_errors:
+            st.caption("Fill in all required fields before generating the letter.")
 
-    if hourly_rate is None:
-        st.error("Please fill in the hourly rate.")
-        return
-
-    if relocation_assistance is None:
-        relocation_assistance = 0.0
-
-    if employment_end_date < employment_start_date:
-        st.error("Employment end date must be on or after the employment start date.")
-        return
-
-    final_output_stem = build_default_output_stem(candidate_name)
-
-    offer_data = build_data(
-        candidate_name=candidate_name,
-        letter_date=today,
-        position_title=position_title,
-        work_location=work_location,
-        employment_start_date=employment_start_date,
-        employment_end_date=employment_end_date,
-        hourly_rate=hourly_rate,
-        relocation_assistance=relocation_assistance,
-        output_stem=final_output_stem,
-    )
-
-    final_output_path = OUTPUT_DIR / f"{offer_data.output_stem}.docx"
-
-    try:
-        with st.spinner("Generating offer letter..."):
-            populate_offer_letter(TEMPLATE_PATH, final_output_path, offer_data)
-    except Exception as exc:
-        st.error(f"Generation failed: {exc}")
-        if final_output_path.exists():
-            st.info(f"The Word file was still saved to `{final_output_path}`.")
-        return
-
-    st.success("Offer letter generated successfully.")
-    st.write(f"Saved file: `{final_output_path}`")
-
-    trigger_download(final_output_path)
+        button_left, button_center, button_right = st.columns([1.2, 1.6, 1.2])
+        with button_center:
+            st.download_button(
+                label="Generate offer letter",
+                data=download_data,
+                file_name=f"{final_output_stem}.docx",
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                disabled=bool(validation_errors or generation_error),
+                use_container_width=True,
+            )
 
 
 if __name__ == "__main__":
