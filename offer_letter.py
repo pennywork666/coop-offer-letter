@@ -343,9 +343,10 @@ def main() -> None:
         }}
         div[data-testid="stFormSubmitButton"] button {{
             width: 100%;
-            min-height: 3.25rem;
-            font-size: 1.05rem;
+            min-height: 4rem;
+            font-size: 1.18rem;
             font-weight: 600;
+            border-radius: 12px;
         }}
         </style>
         <div class="midea-hero">
@@ -364,8 +365,6 @@ def main() -> None:
 
     today = date.today()
     output_options = ["Word", "PDF"] if PDF_CONVERSION_AVAILABLE else ["Word"]
-    if not PDF_CONVERSION_AVAILABLE:
-        st.info("This deployment supports Word output. PDF export requires Windows and Microsoft Word.")
 
     with st.form("offer_letter_form"):
         first_left, first_right = st.columns(2)
@@ -410,11 +409,11 @@ def main() -> None:
             output_type = st.selectbox(
                 "Output type",
                 options=output_options,
-                index=0 if len(output_options) == 1 else None,
-                placeholder="Select output type" if len(output_options) > 1 else None,
+                index=None,
+                placeholder="Select output type",
             )
 
-        button_left, button_center, button_right = st.columns([1.5, 1, 1.5])
+        button_left, button_center, button_right = st.columns([1.2, 1.6, 1.2])
         with button_center:
             submitted = st.form_submit_button("Generate offer letter")
 
