@@ -6,31 +6,16 @@ from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
-import platform
 import re
 
 import streamlit as st
+import streamlit.components.v1 as components
 from docx import Document
-
-try:
-    if platform.system() == "Windows":
-        import pythoncom
-        import win32com.client
-        PDF_CONVERSION_AVAILABLE = True
-    else:
-        pythoncom = None
-        win32com = None
-        PDF_CONVERSION_AVAILABLE = False
-except ImportError:
-    pythoncom = None
-    win32com = None
-    PDF_CONVERSION_AVAILABLE = False
 
 
 BASE_DIR = Path(__file__).resolve().parent
 TEMPLATE_PATH = BASE_DIR / "Offer Letter Template.docx"
 OUTPUT_DIR = BASE_DIR / "generated"
-PDF_EXPORT_FORMAT = 17
 LOGO_PATH = BASE_DIR / "Midea.png"
 LOCATION_DETAILS = {
     "Louisville": "2700 Chestnut Station Ct, Louisville, KY 40299",
@@ -222,39 +207,6 @@ def populate_offer_letter(template_path: Path, output_path: Path, data: OfferLet
     output_path.parent.mkdir(parents=True, exist_ok=True)
     document.save(output_path)
     return output_path
-
-
-def convert_docx_to_pdf(docx_path: Path) -> Path:
-    if not PDF_CONVERSION_AVAILABLE:
-        raise RuntimeError("PDF export is only available on Windows with Microsoft Word installed.")
-
-    pdf_path = docx_path.with_suffix(".pdf")
-    if pdf_path.exists():
-        pdf_path.unlink()
-
-    pythoncom.CoInitialize()
-    word = None
-    document = None
-    try:
-        word = win32com.client.DispatchEx("Word.Application")
-        word.Visible = False
-        word.DisplayAlerts = 0
-
-        document = word.Documents.Open(str(docx_path.resolve()))
-        document.ExportAsFixedFormat(
-            OutputFileName=str(pdf_path.resolve()),
-            ExportFormat=PDF_EXPORT_FORMAT,
-        )
-    finally:
-        if document is not None:
-            document.Close(False)
-        if word is not None:
-            word.Quit()
-        pythoncom.CoUninitialize()
-
-    return pdf_path
-
-
 def build_data(
     candidate_name: str,
     letter_date: date,
@@ -277,23 +229,24 @@ def build_data(
         relocation_assistance=Decimal(str(relocation_assistance)),
         output_stem=sanitize_filename(output_stem),
     )
+ 
 
-
-def render_download(file_path: Path, output_type: str) -> None:
-    mime = (
-        "application/pdf"
-        if output_type == "PDF"
-        else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+def trigger_download(file_path: Path) -> None:
+    mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    file_data = base64.b64encode(file_path.read_bytes()).decode("ascii")
+    components.html(
+        f"""
+        <script>
+        const link = document.createElement("a");
+        link.href = "data:{mime};base64,{file_data}";
+        link.download = "{file_path.name}";
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        </script>
+        """,
+        height=0,
     )
-    label = "Download PDF (.pdf)" if output_type == "PDF" else "Download Word (.docx)"
-
-    with file_path.open("rb") as output_file:
-        st.download_button(
-            label=label,
-            data=output_file.read(),
-            file_name=file_path.name,
-            mime=mime,
-        )
 
 
 def main() -> None:
@@ -341,8 +294,13 @@ def main() -> None:
             margin: 0.75rem 0 2rem;
             letter-spacing: 0.02em;
         }}
-        div[data-testid="stFormSubmitButton"] button {{
+        div[data-testid="stFormSubmitButton"] {{
+            display: flex;
+            justify-content: center;
             width: 100%;
+        }}
+        div[data-testid="stFormSubmitButton"] button {{
+            width: 340px;
             min-height: 4rem;
             font-size: 1.18rem;
             font-weight: 600;
@@ -364,7 +322,6 @@ def main() -> None:
     OUTPUT_DIR.mkdir(exist_ok=True)
 
     today = date.today()
-    output_options = ["Word", "PDF"] if PDF_CONVERSION_AVAILABLE else ["Word"]
 
     with st.form("offer_letter_form"):
         first_left, first_right = st.columns(2)
@@ -406,16 +363,9 @@ def main() -> None:
                 placeholder="Select a location",
             )
         with fourth_right:
-            output_type = st.selectbox(
-                "Output type",
-                options=output_options,
-                index=None,
-                placeholder="Select output type",
-            )
+            st.empty()
 
-        button_left, button_center, button_right = st.columns([1.2, 1.6, 1.2])
-        with button_center:
-            submitted = st.form_submit_button("Generate offer letter")
+        submitted = st.form_submit_button("Generate offer letter")
 
     if not submitted:
         return
@@ -424,7 +374,6 @@ def main() -> None:
         "Name": candidate_name,
         "Job title": position_title,
         "Working location": work_location or "",
-        "Output type": output_type or "",
     }
 
     missing_fields = [label for label, value in required_fields.items() if not value.strip()]
@@ -461,26 +410,21 @@ def main() -> None:
         output_stem=final_output_stem,
     )
 
-    docx_path = OUTPUT_DIR / f"{offer_data.output_stem}.docx"
-    final_output_path = docx_path if output_type == "Word" else docx_path.with_suffix(".pdf")
+    final_output_path = OUTPUT_DIR / f"{offer_data.output_stem}.docx"
 
     try:
         with st.spinner("Generating offer letter..."):
-            populate_offer_letter(TEMPLATE_PATH, docx_path, offer_data)
-            if output_type == "PDF":
-                final_output_path = convert_docx_to_pdf(docx_path)
-                if docx_path.exists():
-                    docx_path.unlink()
+            populate_offer_letter(TEMPLATE_PATH, final_output_path, offer_data)
     except Exception as exc:
         st.error(f"Generation failed: {exc}")
-        if docx_path.exists():
-            st.info(f"The Word file was still saved to `{docx_path}`.")
+        if final_output_path.exists():
+            st.info(f"The Word file was still saved to `{final_output_path}`.")
         return
 
     st.success("Offer letter generated successfully.")
     st.write(f"Saved file: `{final_output_path}`")
 
-    render_download(final_output_path, output_type)
+    trigger_download(final_output_path)
 
 
 if __name__ == "__main__":
