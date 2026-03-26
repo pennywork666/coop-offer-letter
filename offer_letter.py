@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import date
@@ -17,6 +18,7 @@ BASE_DIR = Path(__file__).resolve().parent
 TEMPLATE_PATH = BASE_DIR / "Offer Letter Template.docx"
 OUTPUT_DIR = BASE_DIR / "generated"
 PDF_EXPORT_FORMAT = 17
+LOGO_PATH = BASE_DIR / "Midea.png"
 LOCATION_DETAILS = {
     "Louisville": "2700 Chestnut Station Ct, Louisville, KY 40299",
     "Boston": "260 Charles Street, Suite 401, Waltham, MA 02453",
@@ -54,6 +56,11 @@ def sanitize_filename(value: str) -> str:
 
 def compute_overtime_rate(hourly_rate: Decimal) -> Decimal:
     return hourly_rate * Decimal("1.5")
+
+
+def get_image_data_uri(image_path: Path) -> str:
+    encoded = base64.b64encode(image_path.read_bytes()).decode("ascii")
+    return f"data:image/png;base64,{encoded}"
 
 
 def build_default_output_stem(candidate_name: str) -> str:
@@ -274,22 +281,61 @@ def render_download(file_path: Path, output_type: str) -> None:
 
 
 def main() -> None:
-    st.set_page_config(page_title="MARC CO-OP Offfer Letter Generator", layout="wide")
+    st.set_page_config(page_title="MARC CO-OP Offer Letter Generator", layout="wide")
+    logo_markup = ""
+    if LOGO_PATH.exists():
+        logo_markup = f'<img class="midea-logo" src="{get_image_data_uri(LOGO_PATH)}" alt="Midea logo" />'
+
     st.markdown(
-        """
+        f"""
         <style>
-        h1.marc-title {
+        [data-testid="stAppViewContainer"] {{
+            background: linear-gradient(180deg, #dff1ff 0%, #c7e4ff 100%);
+        }}
+        [data-testid="stHeader"] {{
+            background: transparent;
+        }}
+        .main .block-container {{
+            max-width: 1180px;
+            padding-top: 3.5rem;
+            padding-bottom: 2.5rem;
+        }}
+        div[data-testid="stForm"] {{
+            background: rgba(255, 255, 255, 0.98);
+            border: 1px solid rgba(104, 157, 214, 0.22);
+            border-radius: 18px;
+            padding: 1.25rem;
+            box-shadow: 0 16px 36px rgba(72, 120, 174, 0.12);
+        }}
+        .midea-hero {{
+            position: relative;
+            min-height: 88px;
+            margin-bottom: 1.75rem;
+        }}
+        .midea-logo {{
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 180px;
+            height: auto;
+        }}
+        h1.marc-title {{
             text-align: center;
-            margin-bottom: 2rem;
-        }
-        div[data-testid="stFormSubmitButton"] button {
+            color: #0f4d8a;
+            margin: 0.75rem 0 2rem;
+            letter-spacing: 0.02em;
+        }}
+        div[data-testid="stFormSubmitButton"] button {{
             width: 100%;
             min-height: 3.25rem;
             font-size: 1.05rem;
             font-weight: 600;
-        }
+        }}
         </style>
-        <h1 class="marc-title">MARC CO-OP Offer Letter Generator</h1>
+        <div class="midea-hero">
+            {logo_markup}
+            <h1 class="marc-title">MARC CO-OP Offer Letter Generator</h1>
+        </div>
         """,
         unsafe_allow_html=True,
     )
@@ -311,28 +357,12 @@ def main() -> None:
 
         second_left, second_right = st.columns(2)
         with second_left:
-            work_location = st.selectbox(
-                "Working location",
-                options=list(LOCATION_DETAILS.keys()),
-                index=None,
-                placeholder="Select a location",
-            )
+            employment_start_date = st.date_input("Employment start date", value=None)
         with second_right:
-            output_type = st.selectbox(
-                "Output type",
-                options=["Word", "PDF"],
-                index=None,
-                placeholder="Select output type",
-            )
+            employment_end_date = st.date_input("Employment end date", value=None)
 
         third_left, third_right = st.columns(2)
         with third_left:
-            employment_start_date = st.date_input("Employment start date", value=None)
-        with third_right:
-            employment_end_date = st.date_input("Employment end date", value=None)
-
-        fourth_left, fourth_right = st.columns(2)
-        with fourth_left:
             hourly_rate = st.number_input(
                 "Hourly rate ($)",
                 min_value=0.0,
@@ -340,13 +370,29 @@ def main() -> None:
                 step=0.5,
                 placeholder="Enter hourly rate",
             )
-        with fourth_right:
+        with third_right:
             relocation_assistance = st.number_input(
                 "Relocation assistance ($)",
                 min_value=0.0,
                 value=None,
                 step=100.0,
                 placeholder="Enter relocation assistance",
+            )
+
+        fourth_left, fourth_right = st.columns(2)
+        with fourth_left:
+            work_location = st.selectbox(
+                "Working location",
+                options=list(LOCATION_DETAILS.keys()),
+                index=None,
+                placeholder="Select a location",
+            )
+        with fourth_right:
+            output_type = st.selectbox(
+                "Output type",
+                options=["Word", "PDF"],
+                index=None,
+                placeholder="Select output type",
             )
 
         button_left, button_center, button_right = st.columns([1.5, 1, 1.5])
