@@ -6,12 +6,25 @@ from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
+import platform
 import re
 
-import pythoncom
 import streamlit as st
-import win32com.client
 from docx import Document
+
+try:
+    if platform.system() == "Windows":
+        import pythoncom
+        import win32com.client
+        PDF_CONVERSION_AVAILABLE = True
+    else:
+        pythoncom = None
+        win32com = None
+        PDF_CONVERSION_AVAILABLE = False
+except ImportError:
+    pythoncom = None
+    win32com = None
+    PDF_CONVERSION_AVAILABLE = False
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -212,6 +225,9 @@ def populate_offer_letter(template_path: Path, output_path: Path, data: OfferLet
 
 
 def convert_docx_to_pdf(docx_path: Path) -> Path:
+    if not PDF_CONVERSION_AVAILABLE:
+        raise RuntimeError("PDF export is only available on Windows with Microsoft Word installed.")
+
     pdf_path = docx_path.with_suffix(".pdf")
     if pdf_path.exists():
         pdf_path.unlink()
@@ -347,6 +363,9 @@ def main() -> None:
     OUTPUT_DIR.mkdir(exist_ok=True)
 
     today = date.today()
+    output_options = ["Word", "PDF"] if PDF_CONVERSION_AVAILABLE else ["Word"]
+    if not PDF_CONVERSION_AVAILABLE:
+        st.info("This deployment supports Word output. PDF export requires Windows and Microsoft Word.")
 
     with st.form("offer_letter_form"):
         first_left, first_right = st.columns(2)
@@ -390,9 +409,9 @@ def main() -> None:
         with fourth_right:
             output_type = st.selectbox(
                 "Output type",
-                options=["Word", "PDF"],
-                index=None,
-                placeholder="Select output type",
+                options=output_options,
+                index=0 if len(output_options) == 1 else None,
+                placeholder="Select output type" if len(output_options) > 1 else None,
             )
 
         button_left, button_center, button_right = st.columns([1.5, 1, 1.5])
