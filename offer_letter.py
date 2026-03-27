@@ -18,8 +18,14 @@ TEMPLATE_PATH = BASE_DIR / "Offer Letter Template.docx"
 LOGO_PATH = BASE_DIR / "Midea.png"
 PLACEHOLDER_PATTERN = re.compile(r"\{\{\s*([a-zA-Z0-9_]+)\s*\}\}")
 WORK_LOCATION_OPTIONS = {
-    "Louisville": "Louisville, KY",
-    "Boston": "Boston, MA",
+    "Louisville": {
+        "address": "2700 Chestnut Station Ct, Louisville, KY 40299",
+        "location": "Louisville, KY",
+    },
+    "Boston": {
+        "address": "260 Charles Street, Suite 401, Waltham, MA 02453",
+        "location": "Boston, MA",
+    },
 }
 JOB_SUMMARY_BY_TITLE: dict[str, str] = {
     "Mechanical Engineering": (
@@ -192,6 +198,7 @@ class OfferLetterData:
     position_title: str
     job_summary: str
     work_location: str
+    location: str
     employment_start_date: date
     employment_end_date: date
     hourly_rate: Decimal
@@ -256,6 +263,24 @@ def replace_paragraph_text(paragraph, text: str) -> None:
     add_styled_run(paragraph, text, source_run)
 
 
+def add_grouped_text_segments(paragraph, text: str, run_indexes: list[int], source_runs) -> None:
+    if not text:
+        return
+
+    if not run_indexes:
+        add_styled_run(paragraph, text, source_runs[0] if source_runs else None)
+        return
+
+    segment_start = 0
+    current_run_index = run_indexes[0]
+    for index, run_index in enumerate(run_indexes[1:], start=1):
+        if run_index != current_run_index:
+            add_styled_run(paragraph, text[segment_start:index], source_runs[current_run_index])
+            segment_start = index
+            current_run_index = run_index
+    add_styled_run(paragraph, text[segment_start:], source_runs[current_run_index])
+
+
 def iter_paragraphs(parent):
     for paragraph in parent.paragraphs:
         yield paragraph
@@ -278,12 +303,44 @@ def replace_placeholders(text: str, replacements: dict[str, str]) -> str:
     return PLACEHOLDER_PATTERN.sub(lookup, text)
 
 
-def normalize_generated_text(text: str) -> str:
-    return re.sub(
-        r"(,\s*[A-Z]{2})(we will provide relocation assistance)",
-        r"\1 \2",
-        text,
-    )
+def replace_placeholders_in_paragraph(paragraph, replacements: dict[str, str]) -> None:
+    original_runs = list(paragraph.runs)
+    original_text = "".join(run.text for run in original_runs)
+    if not PLACEHOLDER_PATTERN.search(original_text):
+        return
+
+    char_run_indexes: list[int] = []
+    for run_index, run in enumerate(original_runs):
+        char_run_indexes.extend([run_index] * len(run.text))
+
+    segments: list[tuple[str, int | None, list[int] | None]] = []
+    cursor = 0
+    for match in PLACEHOLDER_PATTERN.finditer(original_text):
+        if match.start() > cursor:
+            plain_text = original_text[cursor:match.start()]
+            plain_run_indexes = char_run_indexes[cursor:match.start()]
+            segments.append((plain_text, None, plain_run_indexes))
+
+        placeholder_key = match.group(1).strip()
+        replacement_text = replacements.get(placeholder_key, match.group(0))
+        placeholder_run_index = char_run_indexes[match.start()] if char_run_indexes else 0
+        segments.append((replacement_text, placeholder_run_index, None))
+        cursor = match.end()
+
+    if cursor < len(original_text):
+        trailing_text = original_text[cursor:]
+        trailing_run_indexes = char_run_indexes[cursor:]
+        segments.append((trailing_text, None, trailing_run_indexes))
+
+    clear_runs(paragraph)
+    for text, run_index, run_indexes in segments:
+        if not text:
+            continue
+        if run_indexes is not None:
+            add_grouped_text_segments(paragraph, text, run_indexes, original_runs)
+        else:
+            source_run = original_runs[run_index] if original_runs else None
+            add_styled_run(paragraph, text, source_run)
 
 
 def build_offer_letter_document(template_path: Path, data: OfferLetterData) -> Document:
@@ -300,6 +357,7 @@ def build_offer_letter_document(template_path: Path, data: OfferLetterData) -> D
         "job_title": data.position_title,
         "job_summary": data.job_summary,
         "work_location": data.work_location,
+        "location": f"{data.location} ",
         "start_date": format_long_date(data.employment_start_date),
         "end_date": format_long_date(data.employment_end_date),
         "hourly_rate": format_money(data.hourly_rate),
@@ -308,22 +366,7 @@ def build_offer_letter_document(template_path: Path, data: OfferLetterData) -> D
     }
 
     for paragraph in iter_paragraphs(document):
-        original_text = paragraph.text
-        if PLACEHOLDER_PATTERN.search(original_text):
-            updated_text = normalize_generated_text(replace_placeholders(original_text, replacements))
-            if updated_text != original_text:
-                replace_paragraph_text(paragraph, updated_text)
-
-    label_replacements = {
-        "Name (Please Print):": f"Name (Please Print): {data.candidate_name}",
-        "Planned Employment Start Date:": (
-            f"Planned Employment Start Date: {format_long_date(data.employment_start_date)}"
-        ),
-    }
-    for paragraph in iter_paragraphs(document):
-        replacement_text = label_replacements.get(paragraph.text.strip())
-        if replacement_text:
-            replace_paragraph_text(paragraph, replacement_text)
+        replace_placeholders_in_paragraph(paragraph, replacements)
 
     return document
 
@@ -349,12 +392,17 @@ def build_data(
     output_stem: str,
 ) -> OfferLetterData:
     location_label = work_location.strip()
+    location_values = WORK_LOCATION_OPTIONS.get(
+        location_label,
+        {"address": location_label, "location": location_label},
+    )
     return OfferLetterData(
         candidate_name=candidate_name.strip(),
         letter_date=letter_date,
         position_title=position_title.strip(),
         job_summary=job_summary.strip(),
-        work_location=WORK_LOCATION_OPTIONS.get(location_label, location_label),
+        work_location=location_values["address"],
+        location=location_values["location"],
         employment_start_date=employment_start_date,
         employment_end_date=employment_end_date,
         hourly_rate=Decimal(str(hourly_rate)),
@@ -435,7 +483,7 @@ def main() -> None:
     with st.container(border=True):
         first_left, first_right = st.columns(2)
         with first_left:
-            candidate_name = st.text_input("Name", value="")
+            candidate_name = st.text_input("Full name", value="")
         with first_right:
             if configured_job_titles:
                 position_title = st.selectbox(
@@ -450,9 +498,7 @@ def main() -> None:
                 position_title = st.text_input("Job title", value="")
                 job_summary = ""
 
-        if configured_job_titles:
-            st.text_area("Job summary", value=job_summary, height=140, disabled=True)
-        else:
+        if not configured_job_titles:
             job_summary = st.text_area(
                 "Job summary",
                 value="",
@@ -484,23 +530,12 @@ def main() -> None:
                 placeholder="Enter relocation assistance",
             )
 
-        fourth_left, fourth_right = st.columns(2)
-        with fourth_left:
-            work_location = st.selectbox(
-                "Working location",
-                options=list(WORK_LOCATION_OPTIONS.keys()),
-                index=None,
-                placeholder="Select a location",
-            )
-        with fourth_right:
-            if work_location:
-                st.text_input(
-                    "Location used in letter",
-                    value=WORK_LOCATION_OPTIONS[work_location],
-                    disabled=True,
-                )
-            else:
-                st.empty()
+        work_location = st.selectbox(
+            "Working location",
+            options=list(WORK_LOCATION_OPTIONS.keys()),
+            index=None,
+            placeholder="Select a location",
+        )
 
         if relocation_assistance is None:
             relocation_assistance = 0.0
