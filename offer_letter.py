@@ -16,9 +16,172 @@ from docx import Document
 BASE_DIR = Path(__file__).resolve().parent
 TEMPLATE_PATH = BASE_DIR / "Offer Letter Template.docx"
 LOGO_PATH = BASE_DIR / "Midea.png"
-LOCATION_DETAILS = {
-    "Louisville": "2700 Chestnut Station Ct, Louisville, KY 40299",
-    "Boston": "260 Charles Street, Suite 401, Waltham, MA 02453",
+PLACEHOLDER_PATTERN = re.compile(r"\{\{\s*([a-zA-Z0-9_]+)\s*\}\}")
+WORK_LOCATION_OPTIONS = {
+    "Louisville": "Louisville, KY",
+    "Boston": "Boston, MA",
+}
+JOB_SUMMARY_BY_TITLE: dict[str, str] = {
+    "Mechanical Engineering": (
+        "As a key role for introducing new US product platforms, the Mechanical Engineering "
+        "Co-op will join a team of experts meeting the needs of the consumer American "
+        "Consumer in one of our various departments. The Co-op will work on product "
+        "development of new and innovative features for integration into a US product line. "
+        "The Co-op will support the development of new technologies and designs which "
+        "provide market-leading performance and consumer acceptance. The Co-op will also "
+        "have the opportunity to assist in the development of Midea's US patent portfolio "
+        "development, as well as actively working on individual part design, prototyping, "
+        "and a wide variety of laboratory work in proving out conceptual designs."
+    ),
+    "Industrial Design": (
+        "As a key role for the introduction of new US product platforms, the Industrial "
+        "Design Co-op will join a team of experts meeting the needs of the consumer "
+        "American Consumer in appliance technology. Midea's ID interns work hands-on with "
+        "our full-time engineers to brainstorm, sketch, conceptualize, prototype, and/or "
+        "add to the Midea patent portfolio. The intern will work on product development "
+        "and unique feature creation with innovative graphics, colors, and product styling "
+        "for integration into a US product line. The intern will support development of "
+        "creative design elements that meet modern styling and branding of other Midea "
+        "products. The intern will assist in the development of new technologies and "
+        "designs which provide market-leading form and aesthetics. The intern may also have "
+        "the opportunity to assist in the development of Midea's US patent portfolio "
+        "development and assist with prototyping and laboratory work in proving out "
+        "conceptual and aesthetic design."
+    ),
+    "Electrical Engineering": (
+        "As a key role for the introduction of new US product platforms, the Electrical "
+        "Engineering Co-op will support the introduction of new U.S. product platforms. "
+        "The Co-op will work closely with the engineering team to design, develop, and test "
+        "embedded systems for innovative home appliances. Key responsibilities include "
+        "firmware configuration and optimization, implementing Over-the-Air (OTA) update "
+        "functionality, and contributing to system architecture and design reviews. The "
+        "Co-op will also collaborate with colleagues on circuit design, prototyping, PCB "
+        "soldering, and debugging activities. Additional opportunities may involve "
+        "supporting patent portfolio development and assisting in the creation of product "
+        "specifications to guide R&D. This role offers hands-on experience with cutting-edge "
+        "technologies while contributing to Midea's mission of delivering market-leading "
+        "performance and consumer-focused innovations."
+    ),
+    "Computer Engineering": (
+        "As a key role for the introduction of new US product platforms, the Computer "
+        "Engineering Co-op will work alongside the engineering team to design, develop, and "
+        "test embedded systems across a range of applications. This role may involve "
+        "configuring and optimizing firmware for microprocessors, implementing secure "
+        "Over-the-Air (OTA) updates, and assisting with hardware tasks such as PCB "
+        "soldering and circuit debugging. The co-op will participate in design reviews, "
+        "contribute to system architecture discussions, and maintain thorough documentation "
+        "of specifications, testing procedures, and results to support collaboration and "
+        "knowledge sharing."
+    ),
+    "Consumer and Marketing Insights (CMI)": (
+        "As a key role for supporting consumer insights in new product development, the "
+        "Consumer and Marketing Insights (\"CMI\") Co-op will join a team of specialists "
+        "dedicated to understanding the needs of the target consumer. The Intern will "
+        "support the Consumer Insights Specialist throughout all phases of consumer insights "
+        "research. The Intern will help perform both quantitative and qualitative research "
+        "to gain a clear picture of consumer behavior, preferences, and market trends. The "
+        "Intern will assist in designing and developing questionnaires and surveys for "
+        "various research projects, and help manage and maintain research equipment and "
+        "materials. The Intern will ensure accuracy in data analysis and reporting, and "
+        "assist in the development of detailed reports and presentations to share findings "
+        "and recommendations with stakeholders. The Intern will also have the opportunity "
+        "to utilize consumer insights to help guide the development of products to meet the "
+        "needs of the target consumer."
+    ),
+    "Computer Science": (
+        "As a key role for leveraging data and software to drive product development, the "
+        "Computer Science Co-op will join a team of experts dedicated to delivering "
+        "exceptional products for the US market. The Co-op will utilize Python to gather "
+        "and build data models via web scraping, and will add functionalities, fix bugs in "
+        "the code, gather data trends, and condense data into a presentable format for team "
+        "members. The Co-op will work on product specifications containing adequate "
+        "information to guide R&D activities. The Co-op may work on individual circuit "
+        "designs, prototyping, and laboratory work in proving out conceptual designs. The "
+        "Co-op will support the development of new technologies and designs which provide "
+        "market-leading performance and consumer acceptance. The Co-op will also have the "
+        "opportunity to work closely with the engineering team to design, develop, and test "
+        "embedded systems for various applications."
+    ),
+    "Data Science/Data Analyst": (
+        "As a key role for extracting and applying insights from data to drive product and "
+        "business decisions, the Data Science/Data Analyst Co-op will join a team focused "
+        "on leveraging data for competitive advantage. The Co-op will use various machine "
+        "learning software to mine online product reviews, including competitive data, and "
+        "apply machine learning techniques to determine sentiment and categorize feedback by "
+        "product family. The Co-op will utilize findings to provide actionable feedback to "
+        "R&D teams for product improvements and future planning. The role will also involve "
+        "using machine learning to gather product insights from social platforms and "
+        "building dashboards to democratize these insights for the team. The Co-op will "
+        "assist in analyzing data from research events to recognize key insights and work "
+        "with cross-functional teams to build sales tools from large datasets, covering "
+        "areas such as sales incentives, competitive analysis, and service data. The Co-op "
+        "will proactively look for opportunities to use their skills to improve team "
+        "processes and will have the ability to meet with customers to discuss product "
+        "reviews and ratings, helping to answer questions about their processes."
+    ),
+    "HR/IT": (
+        "As a key role for providing integrated technical and human resources support, the "
+        "HR/IT Intern will join a team dedicated to enhancing operational efficiency and "
+        "employee experience. The Intern will provide hands-on technical support by "
+        "troubleshooting hardware, software, and network issues, while assisting employees "
+        "with system setup, configuration, and documentation. The Intern will respond to "
+        "help desk tickets, document resolutions, and support data collection and analysis "
+        "for IT improvement projects. The role will involve documenting IT and HR "
+        "workflows, streamlining processes, and contributing ideas for improving efficiency "
+        "and communication, including the creation of user guides and system logs. The "
+        "Intern will collaborate with teams across departments to understand and support "
+        "technology and HR needs. The Intern will participate in IT infrastructure or "
+        "software upgrade projects and HR performance management initiatives under the "
+        "guidance of department mentors. The Intern will also assist with full-cycle hiring "
+        "activities, including screening resumes, scheduling interviews, and maintaining "
+        "candidate records. Furthermore, the Intern will support employee engagement "
+        "initiatives, help foster a positive company culture, and assist with the "
+        "coordination of the co-op program, company events, and HR-led activities."
+    ),
+    "HR": (
+        "As a key role for supporting the human resources function across the employee "
+        "lifecycle, the HR Intern will join a team dedicated to fostering a positive and "
+        "efficient workplace. The Intern will assist in the coordination of full-cycle "
+        "hiring efforts, including screening resumes, scheduling candidates, and "
+        "maintaining candidate records. The Intern will assist the HR manager in "
+        "scheduling and facilitating a smooth new hire onboarding process. The role will "
+        "involve supporting employee engagement initiatives and contributing to a positive "
+        "company culture. The Intern will maintain accurate HR records and documentation to "
+        "ensure data integrity and compliance. The Intern will also assist in the MARC "
+        "co-op program coordination and event planning, and help with employee performance "
+        "management activities under the guidance of the HR manager. The Intern will be "
+        "assigned other duties as needed to support the HR department."
+    ),
+    "Materials Science and Engineering": (
+        "As the key role for advancing materials innovation and supporting product "
+        "development, the Materials Science and Engineering Co-op will join a team of "
+        "experts dedicated to creating market-leading technologies. The Co-op will research "
+        "cutting-edge engineering topics and assess potential innovation opportunities. The "
+        "Co-op will plan and carry out laboratory experiments to support rapid prototyping "
+        "projects, utilizing analytical equipment to test new materials concepts and "
+        "processes. The role involves analyzing data and developing presentation materials "
+        "for effective communication of results. The Co-op will prototype design concepts, "
+        "assess performance, and summarize findings. The Co-op will interact with design "
+        "engineers to discuss experimental results and conduct feasibility studies to aid "
+        "with design innovation and product development. The Co-op will actively "
+        "participate in project reviews and present results to cross-functional design "
+        "teams. The Co-op will also have the opportunity to work with engineers on the "
+        "development of new intellectual property."
+    ),
+    "IoT/Software Engineering": (
+        "As the key role for advancing smart home technology and IoT solutions, the "
+        "IoT/Software Engineering Co-op will join a team of experts dedicated to enhancing "
+        "the Smart Home ecosystem. The Co-op will work with Senior Staff IoT and Software "
+        "Engineers to implement new features into the Smart Home ecosystem. The Co-op will "
+        "work on advanced development IoT projects pertaining to Residential and Central "
+        "Air Conditioning products, such as creating a proof of concept to adjust an AC's "
+        "setpoint temperature automatically based on a person's body temperature or room "
+        "occupancy. The role involves working in cross-functional and cross-cultural teams "
+        "to ensure IoT/smart home features and services conform to specifications and meet "
+        "performance needs. The Co-op will assist in testing IoT devices to ensure they "
+        "adhere to standards. The Co-op will also support other team members in their "
+        "technical specialty as needed."
+    ),
 }
 
 
@@ -27,6 +190,7 @@ class OfferLetterData:
     candidate_name: str
     letter_date: date
     position_title: str
+    job_summary: str
     work_location: str
     employment_start_date: date
     employment_end_date: date
@@ -64,19 +228,6 @@ def build_default_output_stem(candidate_name: str) -> str:
     return sanitize_filename(f"{candidate_name} Offer Letter")
 
 
-def extract_reporting_clause(paragraph_text: str) -> str:
-    match = re.search(
-        r"You will be reporting to\s*(.*?)\.\s*For purposes",
-        paragraph_text,
-        flags=re.DOTALL,
-    )
-    if not match:
-        return ""
-
-    clause = " ".join(match.group(1).split()).strip(" ,.")
-    return clause
-
-
 def clear_runs(paragraph) -> None:
     for child in list(paragraph._p):
         if child.tag.endswith("}r") or child.tag.endswith("}hyperlink"):
@@ -93,116 +244,86 @@ def add_styled_run(paragraph, text: str, source_run=None) -> None:
         run._r.insert(0, deepcopy(source_run._r.rPr))
 
 
-def replace_paragraph(paragraph, parts: list[tuple[str, int | None]]) -> None:
+def replace_paragraph_text(paragraph, text: str) -> None:
     original_runs = list(paragraph.runs)
     clear_runs(paragraph)
 
-    if not parts:
+    if not text:
         paragraph.add_run("")
         return
 
-    for text, run_index in parts:
-        source_run = None
-        if original_runs:
-            if run_index is not None and 0 <= run_index < len(original_runs):
-                source_run = original_runs[run_index]
-            else:
-                source_run = original_runs[0]
-        add_styled_run(paragraph, text, source_run)
+    source_run = original_runs[0] if original_runs else None
+    add_styled_run(paragraph, text, source_run)
+
+
+def iter_paragraphs(parent):
+    for paragraph in parent.paragraphs:
+        yield paragraph
+    for table in parent.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                yield from iter_paragraphs(cell)
+
+
+def paragraph_has_placeholder(paragraph, placeholder_name: str) -> bool:
+    pattern = r"\{\{\s*" + re.escape(placeholder_name) + r"\s*\}\}"
+    return re.search(pattern, paragraph.text) is not None
+
+
+def replace_placeholders(text: str, replacements: dict[str, str]) -> str:
+    def lookup(match: re.Match[str]) -> str:
+        key = match.group(1).strip()
+        return replacements.get(key, match.group(0))
+
+    return PLACEHOLDER_PATTERN.sub(lookup, text)
+
+
+def normalize_generated_text(text: str) -> str:
+    return re.sub(
+        r"(,\s*[A-Z]{2})(we will provide relocation assistance)",
+        r"\1 \2",
+        text,
+    )
 
 
 def build_offer_letter_document(template_path: Path, data: OfferLetterData) -> Document:
     document = Document(template_path)
-    paragraphs = document.paragraphs
-
-    if len(paragraphs) < 57:
-        raise ValueError("The template structure changed. Expected at least 57 paragraphs.")
-
-    location_text = LOCATION_DETAILS.get(data.work_location, data.work_location)
-    overtime_rate = compute_overtime_rate(data.hourly_rate)
-    relocation_paragraph = paragraphs[15]
-    reporting_clause = extract_reporting_clause(paragraphs[8].text)
-    reporting_sentence = f" You will be reporting to {reporting_clause}." if reporting_clause else ""
-
-    replace_paragraph(paragraphs[6], [(format_long_date(data.letter_date), None)])
-    replace_paragraph(
-        paragraphs[7],
-        [
-            ("Dear ", 0),
-            (data.candidate_name, 2),
-            (",", 3),
-        ],
-    )
-    replace_paragraph(
-        paragraphs[8],
-        [
-            (
-                (
-                    f'On behalf of Midea America Corp. ("Midea"), I am pleased to offer you '
-                    f'the full-time position {data.position_title} Co-Op, working at '
-                    f'{location_text}.{reporting_sentence} For purposes of this letter, '
-                    f'your first day of work at Midea will be considered your "Employment Start '
-                    f'Date." Your Employment Start Date will be on '
-                    f'{format_long_date(data.employment_start_date)} until '
-                    f'{format_long_date(data.employment_end_date)}.'
-                ),
-                0,
-            )
-        ],
-    )
-    replace_paragraph(
-        paragraphs[14],
-        [
-            (
-                (
-                    "Base Salary (non-exempt): Your hourly rate will be "
-                    f"${format_money(data.hourly_rate)} per hour, and in the event you are "
-                    "authorized to work overtime, you will be paid out at "
-                    f"${format_money(overtime_rate)} per hour; paid semi-monthly, subject "
-                    "to annual review. Less applicable taxes, deductions and withholdings. "
-                    "Average work week will be 40 hours, as approved, overtime may be needed."
-                ),
-                0,
-            )
-        ],
-    )
-    if data.relocation_assistance != Decimal("0"):
-        replace_paragraph(
-            relocation_paragraph,
-            [
-                (
-                    (
-                        "Relocation Assistance: In order to assist in our transition and move "
-                        "from your current location to "
-                        f"{location_text} we will provide relocation assistance of "
-                        f"${format_money(data.relocation_assistance)} on a grossed-up, pre-tax "
-                        'basis (the "Relocation Benefit") which is payable during the first pay '
-                        "period, to be paid within thirty (30) days of employment. The "
-                        "Relocation Benefit will be subject to full repayment to Midea if you "
-                        "voluntarily resign from Midea or are terminated for cause prior to the "
-                        "12 months of your Employment Start Date."
-                    ),
-                    0,
-                )
-            ],
-        )
-    replace_paragraph(
-        paragraphs[52],
-        [
-            ("Name (Please Print): ", 0),
-            (data.candidate_name, 0),
-        ],
-    )
-    replace_paragraph(
-        paragraphs[56],
-        [
-            ("Planned Employment Start Date: ", 0),
-            (format_long_date(data.employment_start_date), 0),
-        ],
-    )
 
     if data.relocation_assistance == Decimal("0"):
-        remove_paragraph(relocation_paragraph)
+        for paragraph in list(iter_paragraphs(document)):
+            if paragraph_has_placeholder(paragraph, "relocation_fee"):
+                remove_paragraph(paragraph)
+
+    replacements = {
+        "today_date": format_long_date(data.letter_date),
+        "full_name": data.candidate_name,
+        "job_title": data.position_title,
+        "job_summary": data.job_summary,
+        "work_location": data.work_location,
+        "start_date": format_long_date(data.employment_start_date),
+        "end_date": format_long_date(data.employment_end_date),
+        "hourly_rate": format_money(data.hourly_rate),
+        "overtime_rate": format_money(compute_overtime_rate(data.hourly_rate)),
+        "relocation_fee": format_money(data.relocation_assistance),
+    }
+
+    for paragraph in iter_paragraphs(document):
+        original_text = paragraph.text
+        if PLACEHOLDER_PATTERN.search(original_text):
+            updated_text = normalize_generated_text(replace_placeholders(original_text, replacements))
+            if updated_text != original_text:
+                replace_paragraph_text(paragraph, updated_text)
+
+    label_replacements = {
+        "Name (Please Print):": f"Name (Please Print): {data.candidate_name}",
+        "Planned Employment Start Date:": (
+            f"Planned Employment Start Date: {format_long_date(data.employment_start_date)}"
+        ),
+    }
+    for paragraph in iter_paragraphs(document):
+        replacement_text = label_replacements.get(paragraph.text.strip())
+        if replacement_text:
+            replace_paragraph_text(paragraph, replacement_text)
 
     return document
 
@@ -219,6 +340,7 @@ def build_data(
     candidate_name: str,
     letter_date: date,
     position_title: str,
+    job_summary: str,
     work_location: str,
     employment_start_date: date,
     employment_end_date: date,
@@ -226,11 +348,13 @@ def build_data(
     relocation_assistance: float | int,
     output_stem: str,
 ) -> OfferLetterData:
+    location_label = work_location.strip()
     return OfferLetterData(
         candidate_name=candidate_name.strip(),
         letter_date=letter_date,
         position_title=position_title.strip(),
-        work_location=work_location.strip(),
+        job_summary=job_summary.strip(),
+        work_location=WORK_LOCATION_OPTIONS.get(location_label, location_label),
         employment_start_date=employment_start_date,
         employment_end_date=employment_end_date,
         hourly_rate=Decimal(str(hourly_rate)),
@@ -306,13 +430,35 @@ def main() -> None:
         return
 
     today = date.today()
+    configured_job_titles = list(JOB_SUMMARY_BY_TITLE)
 
     with st.container(border=True):
         first_left, first_right = st.columns(2)
         with first_left:
             candidate_name = st.text_input("Name", value="")
         with first_right:
-            position_title = st.text_input("Job title (do not include 'Co-Op')", value="")
+            if configured_job_titles:
+                position_title = st.selectbox(
+                    "Job title",
+                    options=configured_job_titles,
+                    index=None,
+                    placeholder="Select a CO-OP job title",
+                )
+                job_summary = JOB_SUMMARY_BY_TITLE.get(position_title or "", "")
+            else:
+                st.caption("Add entries to JOB_SUMMARY_BY_TITLE to switch this field to dropdown mode.")
+                position_title = st.text_input("Job title", value="")
+                job_summary = ""
+
+        if configured_job_titles:
+            st.text_area("Job summary", value=job_summary, height=140, disabled=True)
+        else:
+            job_summary = st.text_area(
+                "Job summary",
+                value="",
+                height=140,
+                placeholder="Temporary fallback until the job title catalog is filled in.",
+            )
 
         second_left, second_right = st.columns(2)
         with second_left:
@@ -342,12 +488,19 @@ def main() -> None:
         with fourth_left:
             work_location = st.selectbox(
                 "Working location",
-                options=list(LOCATION_DETAILS.keys()),
+                options=list(WORK_LOCATION_OPTIONS.keys()),
                 index=None,
                 placeholder="Select a location",
             )
         with fourth_right:
-            st.empty()
+            if work_location:
+                st.text_input(
+                    "Location used in letter",
+                    value=WORK_LOCATION_OPTIONS[work_location],
+                    disabled=True,
+                )
+            else:
+                st.empty()
 
         if relocation_assistance is None:
             relocation_assistance = 0.0
@@ -355,8 +508,10 @@ def main() -> None:
         validation_errors = []
         if not candidate_name.strip():
             validation_errors.append("Name")
-        if not position_title.strip():
+        if not (position_title or "").strip():
             validation_errors.append("Job title")
+        if not job_summary.strip():
+            validation_errors.append("Job summary")
         if not (work_location or "").strip():
             validation_errors.append("Working location")
         if employment_start_date is None or employment_end_date is None:
@@ -380,6 +535,7 @@ def main() -> None:
                     candidate_name=candidate_name,
                     letter_date=today,
                     position_title=position_title,
+                    job_summary=job_summary,
                     work_location=work_location,
                     employment_start_date=employment_start_date,
                     employment_end_date=employment_end_date,
