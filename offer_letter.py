@@ -189,6 +189,44 @@ JOB_SUMMARY_BY_TITLE: dict[str, str] = {
         "technical specialty as needed."
     ),
 }
+JOB_TITLE_ALIASES = {
+    "mechanical engineering co-op": "Mechanical Engineering",
+    "mechanical engineering coop": "Mechanical Engineering",
+    "mechanical": "Mechanical Engineering",
+    "materials science": "Materials Science and Engineering",
+    "materials science co-op": "Materials Science and Engineering",
+    "materials science and engineering co-op": "Materials Science and Engineering",
+    "chemistry": "Materials Science and Engineering",
+    "chemistry co-op": "Materials Science and Engineering",
+    "industrial design co-op": "Industrial Design",
+    "electrical engineering co-op": "Electrical Engineering",
+    "electrical": "Electrical Engineering",
+    "computer engineering co-op": "Computer Engineering",
+    "consumer and marketing insights": "Consumer and Marketing Insights (CMI)",
+    "consumer and marketing insights co-op": "Consumer and Marketing Insights (CMI)",
+    "cmi": "Consumer and Marketing Insights (CMI)",
+    "cmi co-op": "Consumer and Marketing Insights (CMI)",
+    "computer science co-op": "Computer Science",
+    "data science": "Data Science/Data Analyst",
+    "data science co-op": "Data Science/Data Analyst",
+    "data analyst": "Data Science/Data Analyst",
+    "data analyst co-op": "Data Science/Data Analyst",
+    "data science/data analyst co-op": "Data Science/Data Analyst",
+    "hr/it intern": "HR/IT",
+    "hr it": "HR/IT",
+    "hr it intern": "HR/IT",
+    "hr/it co-op": "HR/IT",
+    "human resources": "HR",
+    "human resources intern": "HR",
+    "hr intern": "HR",
+    "hr co-op": "HR",
+    "iot": "IoT/Software Engineering",
+    "iot co-op": "IoT/Software Engineering",
+    "software engineering": "IoT/Software Engineering",
+    "software engineering co-op": "IoT/Software Engineering",
+    "iot/software engineering co-op": "IoT/Software Engineering",
+    "iot software engineering": "IoT/Software Engineering",
+}
 
 
 @dataclass
@@ -197,12 +235,15 @@ class OfferLetterData:
     letter_date: date
     position_title: str
     job_summary: str
+    manager_name: str
+    manager_title: str
     work_location: str
     location: str
     employment_start_date: date
     employment_end_date: date
     hourly_rate: Decimal
     relocation_assistance: Decimal
+    sign_on_bonus: Decimal
     output_stem: str
 
 
@@ -233,6 +274,20 @@ def get_image_data_uri(image_path: Path) -> str:
 
 def build_default_output_stem(candidate_name: str) -> str:
     return sanitize_filename(f"{candidate_name} Offer Letter")
+
+
+def normalize_job_title(value: str) -> str:
+    normalized = re.sub(r"\bco[\s-]?op\b", "co-op", value, flags=re.IGNORECASE)
+    return " ".join(normalized.split()).casefold()
+
+
+def get_job_summary_for_title(position_title: str) -> str:
+    normalized_title = normalize_job_title(position_title)
+    normalized_title = normalize_job_title(JOB_TITLE_ALIASES.get(normalized_title, normalized_title))
+    for saved_title, saved_summary in JOB_SUMMARY_BY_TITLE.items():
+        if normalize_job_title(saved_title) == normalized_title:
+            return saved_summary
+    return ""
 
 
 def clear_runs(paragraph) -> None:
@@ -350,12 +405,18 @@ def build_offer_letter_document(template_path: Path, data: OfferLetterData) -> D
         for paragraph in list(iter_paragraphs(document)):
             if paragraph_has_placeholder(paragraph, "relocation_fee"):
                 remove_paragraph(paragraph)
+    if data.sign_on_bonus == Decimal("0"):
+        for paragraph in list(iter_paragraphs(document)):
+            if paragraph_has_placeholder(paragraph, "sign_on"):
+                remove_paragraph(paragraph)
 
     replacements = {
         "today_date": format_long_date(data.letter_date),
         "full_name": data.candidate_name,
         "job_title": data.position_title,
         "job_summary": data.job_summary,
+        "manager_name": f" {data.manager_name}",
+        "manager_title": data.manager_title,
         "work_location": data.work_location,
         "location": f"{data.location} ",
         "start_date": format_long_date(data.employment_start_date),
@@ -363,6 +424,7 @@ def build_offer_letter_document(template_path: Path, data: OfferLetterData) -> D
         "hourly_rate": format_money(data.hourly_rate),
         "overtime_rate": format_money(compute_overtime_rate(data.hourly_rate)),
         "relocation_fee": format_money(data.relocation_assistance),
+        "sign_on": format_money(data.sign_on_bonus),
     }
 
     for paragraph in iter_paragraphs(document):
@@ -384,11 +446,14 @@ def build_data(
     letter_date: date,
     position_title: str,
     job_summary: str,
+    manager_name: str,
+    manager_title: str,
     work_location: str,
     employment_start_date: date,
     employment_end_date: date,
     hourly_rate: float | int,
     relocation_assistance: float | int,
+    sign_on_bonus: float | int,
     output_stem: str,
 ) -> OfferLetterData:
     location_label = work_location.strip()
@@ -401,12 +466,15 @@ def build_data(
         letter_date=letter_date,
         position_title=position_title.strip(),
         job_summary=job_summary.strip(),
+        manager_name=manager_name.strip(),
+        manager_title=manager_title.strip(),
         work_location=location_values["address"],
         location=location_values["location"],
         employment_start_date=employment_start_date,
         employment_end_date=employment_end_date,
         hourly_rate=Decimal(str(hourly_rate)),
         relocation_assistance=Decimal(str(relocation_assistance)),
+        sign_on_bonus=Decimal(str(sign_on_bonus)),
         output_stem=sanitize_filename(output_stem),
     )
 
@@ -478,42 +546,61 @@ def main() -> None:
         return
 
     today = date.today()
-    configured_job_titles = list(JOB_SUMMARY_BY_TITLE)
+    saved_job_titles = list(JOB_SUMMARY_BY_TITLE)
+    job_title_options = saved_job_titles + ["Other"]
 
     with st.container(border=True):
         first_left, first_right = st.columns(2)
         with first_left:
             candidate_name = st.text_input("Full name", value="")
         with first_right:
-            if configured_job_titles:
-                position_title = st.selectbox(
-                    "Job title",
-                    options=configured_job_titles,
-                    index=None,
-                    placeholder="Select a CO-OP job title",
-                )
-                job_summary = JOB_SUMMARY_BY_TITLE.get(position_title or "", "")
-            else:
-                st.caption("Add entries to JOB_SUMMARY_BY_TITLE to switch this field to dropdown mode.")
-                position_title = st.text_input("Job title", value="")
-                job_summary = ""
-
-        if not configured_job_titles:
-            job_summary = st.text_area(
-                "Job summary",
-                value="",
-                height=140,
-                placeholder="Temporary fallback until the job title catalog is filled in.",
+            selected_job_title = st.selectbox(
+                "Job title",
+                options=job_title_options,
+                index=None,
+                placeholder="Select a job title",
             )
+
+        position_title = selected_job_title or ""
+        job_summary = ""
+
+        if selected_job_title == "Other":
+            position_title = st.text_input(
+                "Custom job title (title only, no Co-op)",
+                value="",
+            )
+            summary_title = st.selectbox(
+                "Job summary template",
+                options=saved_job_titles + ["Other"],
+                index=None,
+                placeholder="Select a job title for the summary",
+            )
+            if summary_title == "Other":
+                job_summary = st.text_area(
+                    "Job summary",
+                    value="",
+                    height=140,
+                    placeholder="Paste the custom job summary here.",
+                )
+            else:
+                job_summary = JOB_SUMMARY_BY_TITLE.get(summary_title or "", "")
+        elif selected_job_title:
+            job_summary = JOB_SUMMARY_BY_TITLE[selected_job_title]
 
         second_left, second_right = st.columns(2)
         with second_left:
-            employment_start_date = st.date_input("Employment start date", value=None)
+            manager_name = st.text_input("Manager name", value="")
         with second_right:
-            employment_end_date = st.date_input("Employment end date", value=None)
+            manager_title = st.text_input("Manager title", value="")
 
         third_left, third_right = st.columns(2)
         with third_left:
+            employment_start_date = st.date_input("Employment start date", value=None)
+        with third_right:
+            employment_end_date = st.date_input("Employment end date", value=None)
+
+        fourth_left, fourth_right = st.columns(2)
+        with fourth_left:
             hourly_rate = st.number_input(
                 "Hourly rate ($)",
                 min_value=0.0,
@@ -521,7 +608,7 @@ def main() -> None:
                 step=0.5,
                 placeholder="Enter hourly rate",
             )
-        with third_right:
+        with fourth_right:
             relocation_assistance = st.number_input(
                 "Relocation assistance ($)",
                 min_value=0.0,
@@ -530,21 +617,37 @@ def main() -> None:
                 placeholder="Enter relocation assistance",
             )
 
-        work_location = st.selectbox(
-            "Working location",
-            options=list(WORK_LOCATION_OPTIONS.keys()),
-            index=None,
-            placeholder="Select a location",
-        )
+        fifth_left, fifth_right = st.columns(2)
+        with fifth_left:
+            sign_on_bonus = st.number_input(
+                "Sign-on bonus ($)",
+                min_value=0.0,
+                value=None,
+                step=100.0,
+                placeholder="Enter sign-on bonus",
+            )
+        with fifth_right:
+            work_location = st.selectbox(
+                "Working location",
+                options=list(WORK_LOCATION_OPTIONS.keys()),
+                index=None,
+                placeholder="Select a location",
+            )
 
         if relocation_assistance is None:
             relocation_assistance = 0.0
+        if sign_on_bonus is None:
+            sign_on_bonus = 0.0
 
         validation_errors = []
         if not candidate_name.strip():
             validation_errors.append("Name")
         if not (position_title or "").strip():
             validation_errors.append("Job title")
+        if not manager_name.strip():
+            validation_errors.append("Manager name")
+        if not manager_title.strip():
+            validation_errors.append("Manager title")
         if not job_summary.strip():
             validation_errors.append("Job summary")
         if not (work_location or "").strip():
@@ -571,11 +674,14 @@ def main() -> None:
                     letter_date=today,
                     position_title=position_title,
                     job_summary=job_summary,
+                    manager_name=manager_name,
+                    manager_title=manager_title,
                     work_location=work_location,
                     employment_start_date=employment_start_date,
                     employment_end_date=employment_end_date,
                     hourly_rate=hourly_rate,
                     relocation_assistance=relocation_assistance,
+                    sign_on_bonus=sign_on_bonus,
                     output_stem=final_output_stem,
                 )
                 download_data = build_offer_letter_bytes(TEMPLATE_PATH, offer_data)
